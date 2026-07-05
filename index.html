@@ -138,6 +138,9 @@
   .stat-row .dur{flex:none; width:80px; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink)}
   .stat-row .pct{flex:none; width:46px; text-align:right; color:var(--ink-soft); font-size:12px}
 
+  /* ---------- 禁用态 ---------- */
+  .icon-btn.disabled, .danger-btn.disabled{opacity:.4; cursor:not-allowed; pointer-events:none}
+
   /* ---------- 模态框 ---------- */
   .modal-mask{position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:100}
   .modal-mask.show{display:flex}
@@ -219,6 +222,31 @@
   .voice-actions .btn:disabled{opacity:.45; cursor:not-allowed}
   .voice-hint{font-size:12px; color:var(--ink-soft); margin-top:12px}
 
+  /* ---------- 视图切换 ---------- */
+  .view-toggle{display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden}
+  .toggle-btn{border:none; background:#fff; padding:7px 12px; font-size:14px; font-weight:600; cursor:pointer; color:var(--ink-soft); transition:.12s}
+  .toggle-btn:not(:last-child){border-right:1px solid var(--line)}
+  .toggle-btn.active{background:var(--accent); color:#fff}
+  .toggle-btn:hover:not(.active){background:#f0f2f7}
+
+  /* ---------- 周视图 ---------- */
+  .week-lanes{padding-left:var(--wlw,72px); display:flex; flex-direction:column; user-select:none}
+  .day-lane{position:relative; min-height:44px; border-bottom:1px solid var(--line); flex:none}
+  .day-lane:last-child{border-bottom:none}
+  .day-lane.today{background:#f5f9ff; border-left:3px solid var(--accent); margin-left:-3px}
+  .day-lane.dragover{background:#f0f7ff}
+  .day-label{
+    position:absolute; left:calc(-1*var(--wlw,72px)); top:0; width:var(--wlw,72px); height:100%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:12px; font-weight:600; color:var(--ink); line-height:1.25
+  }
+  .day-label .sub{font-size:10px; font-weight:400; color:var(--ink-soft)}
+  .day-lane.today .day-label{color:var(--accent)}
+  .block.week-block{top:4px; height:36px; font-size:11px; padding:3px 6px; border-radius:6px}
+  .block.week-block .b-label{font-size:11px}
+  .block.week-block .b-time{font-size:10px}
+  .draft-block.week-draft{top:4px; height:36px; border-radius:6px}
+
   @media (max-width:640px){
     :root{--hour-px:60px; --quarter-px:15px}
     .stats{flex-direction:column; align-items:stretch}
@@ -237,6 +265,10 @@
     <input type="date" class="date-input" id="dateInput">
     <button class="nav-btn" id="nextDay" title="后一天">›</button>
     <button class="today-btn" id="todayBtn">今天</button>
+    <div class="view-toggle" id="viewToggle">
+      <button class="toggle-btn active" data-view="day">日</button>
+      <button class="toggle-btn" data-view="week">周</button>
+    </div>
     <span class="spacer"></span>
     <button class="voice-btn hidden" id="voiceAddBtn" title="语音添加时间块">🎤 语音添加</button>
     <button class="icon-btn" id="exportBtn">导出</button>
@@ -370,6 +402,11 @@ const PALETTE = ["#4f8cff","#22c55e","#f59e0b","#ef4444","#8b5cf6","#ec4899","#1
 
 let state = loadState();
 let currentDate = todayStr();
+let isWeekView = false;          // 日/周视图模式
+let dragDate = null;             // 周视图拖拽时当前操作的日期
+const WEEK_ROW_H = 44;           // 周视图每行高度(px)
+const WEEK_LABEL_W = 72;         // 周视图左侧标签宽度(px)
+const DAY_NAMES = ["周日","周一","周二","周三","周四","周五","周六"];
 
 function loadState(){
   try{
@@ -393,6 +430,32 @@ function shiftDateStr(s, deltaDays){
   const [y,m,d] = s.split("-").map(Number);
   const dt = new Date(y, m-1, d + deltaDays);
   return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+}
+/* —— 周视图计算 —— */
+function weekMonday(refDate){
+  const [y,m,d] = refDate.split("-").map(Number);
+  const dt = new Date(y, m-1, d);
+  const dow = dt.getDay();                     // 0=周日, 1=周一 …
+  dt.setDate(dt.getDate() + (dow===0 ? -6 : 1-dow));
+  return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+}
+function weekDates(refDate){
+  const mon = weekMonday(refDate);
+  const dates = [];
+  for(let i=0;i<7;i++) dates.push(shiftDateStr(mon,i));
+  return dates;
+}
+function dayOfWeekCN(dateStr){
+  const [y,m,d] = dateStr.split("-").map(Number);
+  return DAY_NAMES[new Date(y,m-1,d).getDay()];
+}
+function weekLabel(dateStr){
+  return `${dayOfWeekCN(dateStr)} ${dateStr.slice(5)}`;
+}
+function findBlockById(id){
+  for(const [date, bs] of Object.entries(state.days))
+    for(const b of bs) if(b.id === id) return {block:b, date};
+  return null;
 }
 function blocksOf(date){ return state.days[date] || (state.days[date]=[]); }
 function catById(id){ return state.categories.find(c=>c.id===id) || {id:id,name:"未分类",color:"#9ca3af"}; }
@@ -461,12 +524,15 @@ function renderNowLine(){
   const nl = document.getElementById("nowLine");
   const now = new Date();
   const minutes = now.getHours()*60 + now.getMinutes();
-  if(currentDate === todayStr()){
+  if(isWeekView){
+    if(weekDates(currentDate).includes(todayStr())){
+      nl.style.display = "block";
+      nl.style.left = (minutes/60*HOUR_PX()) + "px";
+    }else{ nl.style.display = "none"; }
+  }else if(currentDate === todayStr()){
     nl.style.display = "block";
     nl.style.left = (minutes/60*HOUR_PX()) + "px";
-  }else{
-    nl.style.display = "none";
-  }
+  }else{ nl.style.display = "none"; }
 }
 
 /* ---------- 渲染：时间块 ---------- */
@@ -474,34 +540,80 @@ const lanesEl = document.getElementById("lanes");
 let selectedBlockId = null;
 
 function renderBlocks(){
-  // 清掉旧 block 元素
-  lanesEl.querySelectorAll(".block").forEach(n=>n.remove());
-  const bs = blocksOf(currentDate);
-  const overlapSet = computeOverlaps(bs);
+  if(!isWeekView){
+    // —— 日视图 ——
+    // 提前保存 nowLine 引用（清理可能连带删除它）
+    const dayNowLine = document.getElementById("nowLine");
+    lanesEl.querySelectorAll(".block, .day-lane, .draft-block").forEach(n=>n.remove());
+    lanesEl.classList.remove("week-lanes");
+    lanesEl.style.height = "var(--canvas-h)";
+    lanesEl.style.paddingLeft = "";
+    const bs = blocksOf(currentDate);
+    const overlapSet = computeOverlaps(bs);
+    bs.forEach(b=>renderBlockEl(b, null, false, overlapSet));
+    const hint = document.getElementById("hint");
+    hint.style.display = bs.length===0 ? "block":"none";
+    hint.innerHTML = `在空白处<b>按住鼠标横向拖动</b>即可创建时间块<br>当前选中类别：<b>${escapeHtml(catById(activeCatId).name)}</b>`;
+    // 确保 nowLine 恢复为 lanesEl 的兄弟（在 canvasInner 中）
+    if(dayNowLine && dayNowLine.parentNode !== canvasInner) canvasInner.appendChild(dayNowLine);
+    return;
+  }
+  // —— 周视图 ——
+  lanesEl.classList.add("week-lanes");
+  lanesEl.style.height = "auto";
+  lanesEl.style.paddingLeft = "var(--wlw,72px)";
+  // 保存引用（nowLine 可能在旧 day-lane 内，清理前必须提前保存）
+  const dates = weekDates(currentDate);
+  const nowLine = document.getElementById("nowLine");
+  const todayStrVal = todayStr();
+  // 只移除动态元素，保留 #gridBg、#hint 等固定子元素
+  lanesEl.querySelectorAll(".block, .day-lane, .draft-block").forEach(n=>n.remove());
+  const hintEl = document.getElementById("hint");
+  if(hintEl) hintEl.style.display = "none";
+  // 把 nowLine 移入今天对应的 day-lane
 
-  bs.forEach(b=>{
-    const cat = catById(b.categoryId);
-    const el = document.createElement("div");
-    el.className = "block" + (b.id===selectedBlockId ? " selected":"") + (overlapSet.has(b.id) ? " overlap":"");
-    el.dataset.id = b.id;
-    el.style.background = cat.color;
-    el.style.left   = (b.start/60*HOUR_PX()) + "px";
-    el.style.width  = (b.length/60*HOUR_PX()) + "px";
-    el.style.top    = "6px";
-    el.style.height = "calc(var(--canvas-h) - 12px)";
-    el.innerHTML = `
-      <div class="handle left"></div>
-      <div class="b-label">${escapeHtml(b.label || cat.name)}</div>
-      <div class="b-time">${minToHHMM(b.start)}–${minToHHMM(b.start+b.length)} · ${durStr(b.length)}</div>
-      <div class="handle right"></div>`;
-    attachBlockHandlers(el, b);
-    lanesEl.appendChild(el);
+  dates.forEach((date, idx)=>{
+    const lane = document.createElement("div");
+    lane.className = "day-lane" + (date===todayStrVal ? " today":"");
+    lane.dataset.date = date;
+    lane.dataset.idx = idx;
+    // 标签
+    const label = document.createElement("div");
+    label.className = "day-label";
+    label.innerHTML = `${dayOfWeekCN(date)}<br><span class="sub">${date.slice(5)}</span>`;
+    lane.appendChild(label);
+    // 块
+    const bs = blocksOf(date);
+    const overlapSet = computeOverlaps(bs);
+    bs.forEach(b=>renderBlockEl(b, lane, true, overlapSet));
+    lanesEl.appendChild(lane);
+    // 今天行 → 安放 nowLine（null 保护：翻到其他周再回来时 nowLine 可能已丢失）
+    if(date === todayStrVal && nowLine) lane.appendChild(nowLine);
   });
-
-  // 空状态提示
-  const hint = document.getElementById("hint");
-  hint.style.display = bs.length===0 ? "block":"none";
-  hint.innerHTML = `在空白处<b>按住鼠标横向拖动</b>即可创建时间块<br>当前选中类别：<b>${escapeHtml(catById(activeCatId).name)}</b>`;
+  // 如果 nowLine 没被放入本周（今天不在这周），且还活着，放回 canvasInner 备用
+  if(nowLine && !nowLine.parentNode) canvasInner.appendChild(nowLine);
+}
+function renderBlockEl(b, parent, isWeekMode, overlapSet){
+  overlapSet = overlapSet || computeOverlaps([]);
+  parent = parent || lanesEl;
+  const cat = catById(b.categoryId);
+  const el = document.createElement("div");
+  const wmode = isWeekMode ? " week-block" : "";
+  el.className = "block" + wmode + (b.id===selectedBlockId ? " selected":"") + (overlapSet.has(b.id) ? " overlap":"");
+  el.dataset.id = b.id;
+  if(isWeekMode) el.dataset.date = parent.dataset.date;
+  el.style.background = cat.color;
+  el.style.left   = (b.start/60*HOUR_PX()) + "px";
+  el.style.width  = (b.length/60*HOUR_PX()) + "px";
+  el.style.top    = isWeekMode ? "4px" : "6px";
+  el.style.height = isWeekMode ? "36px" : "calc(var(--canvas-h) - 12px)";
+  el.innerHTML = `
+    <div class="handle left"></div>
+    <div class="b-label">${escapeHtml(b.label || cat.name)}</div>
+    <div class="b-time">${minToHHMM(b.start)}–${minToHHMM(b.start+b.length)} · ${durStr(b.length)}</div>
+    <div class="handle right"></div>`;
+  attachBlockHandlers(el, b, isWeekMode ? (parent.dataset.date || currentDate) : null);
+  parent.appendChild(el);
 }
 function computeOverlaps(bs){
   const set = new Set();
@@ -527,86 +639,108 @@ function xToMinSnapped(x){
 /* 移动：返回 start 可取范围 [lo, hi]，使 [start, start+length)
    不与任何邻块重叠，且块停留在当前所在空隙内。
    refStart 为拖动前的原始起点，用于判断邻块在左还是在右。 */
-function moveBounds(selfId, refStart, length){
+function moveBounds(selfId, refStart, length, date){
+  date = date || currentDate;
   let lo = 0, hi = 1440 - length;
-  blocksOf(currentDate).filter(b=>b.id!==selfId).forEach(o=>{
+  blocksOf(date).filter(b=>b.id!==selfId).forEach(o=>{
     const oEnd = o.start + o.length;
-    if(oEnd <= refStart) lo = Math.max(lo, oEnd);                       // 邻块在左侧 → 抬高下界
-    if(o.start >= refStart + length) hi = Math.min(hi, o.start - length); // 邻块在右侧 → 压低上界
+    if(oEnd <= refStart) lo = Math.max(lo, oEnd);
+    if(o.start >= refStart + length) hi = Math.min(hi, o.start - length);
   });
   return [lo, hi];
 }
 /* 缩放左边缘：新 start 的下界 = 左侧邻块的 end（或 0） */
-function leftNeighborEnd(selfId, refStart){
+function leftNeighborEnd(selfId, refStart, date){
+  date = date || currentDate;
   let lo = 0;
-  blocksOf(currentDate).filter(b=>b.id!==selfId).forEach(o=>{
+  blocksOf(date).filter(b=>b.id!==selfId).forEach(o=>{
     if(o.start + o.length <= refStart) lo = Math.max(lo, o.start + o.length);
   });
   return lo;
 }
 /* 缩放右边缘：新右端(start+length)的上界 = 右侧邻块的 start（或 1440） */
-function rightNeighborStart(selfId, refStart, refLength){
+function rightNeighborStart(selfId, refStart, refLength, date){
+  date = date || currentDate;
   let hi = 1440;
-  blocksOf(currentDate).filter(b=>b.id!==selfId).forEach(o=>{
+  blocksOf(date).filter(b=>b.id!==selfId).forEach(o=>{
     if(o.start >= refStart + refLength) hi = Math.min(hi, o.start);
   });
   return hi;
 }
 function clamp(v,lo,hi){ return Math.max(lo, Math.min(v,hi)); }
+
+/* 周视图：根据 y 坐标找到对应的 day-lane 索引 */
+function yToDayIdx(clientY){
+  const top = lanesEl.getBoundingClientRect().top;
+  return Math.max(0, Math.min(Math.floor((clientY - top) / WEEK_ROW_H), 6));
+}
+
 lanesEl.addEventListener("pointerdown", e=>{
-  if(e.target!==lanesEl && e.target.id!=="gridBg" && !e.target.classList.contains("hint")) return;
+  if(!isWeekView && e.target!==lanesEl && e.target.id!=="gridBg" && !e.target.classList.contains("hint")) return;
+  if(isWeekView && !e.target.closest(".day-lane") && !e.target.classList.contains("day-lane")) return;
   if(e.button!==0 && e.pointerType==="mouse") return;
-  // lanesEl 与 canvasInner 左对齐，getBoundingClientRect().left 已随滚动平移，无需再加减 scrollLeft
-  const x = e.clientX - lanesEl.getBoundingClientRect().left;
+  // 周视图 lanesEl 有 padding-left，鼠标 x 需要从内容区左边缘算起
+  const weekPad = isWeekView ? WEEK_LABEL_W : 0;
+  const x = e.clientX - lanesEl.getBoundingClientRect().left - weekPad;
   const startMin = xToMinSnapped(x);
-  createDrag = { startMin, draftEl:null };
+  // 周视图：按 y 坐标映射到日期
+  dragDate = isWeekView ? weekDates(currentDate)[yToDayIdx(e.clientY)] : currentDate;
+  createDrag = { startMin, draftEl:null, weekPad };
   lanesEl.setPointerCapture(e.pointerId);
   e.preventDefault();
 });
 lanesEl.addEventListener("pointermove", e=>{
   if(!createDrag) return;
-  const x = e.clientX - lanesEl.getBoundingClientRect().left;
+  const pad = createDrag.weekPad || 0;
+  const x = e.clientX - lanesEl.getBoundingClientRect().left - pad;
   const curMin = xToMinSnapped(x);
   let s = Math.min(createDrag.startMin, curMin);
   let len = Math.abs(curMin - createDrag.startMin);
   if(len < QUARTER) len = 0;
   if(!createDrag.draftEl && len>=QUARTER){
     const d = document.createElement("div");
-    d.className = "draft-block";
-    lanesEl.appendChild(d);
+    d.className = "draft-block" + (isWeekView ? " week-draft":"");
+    if(isWeekView){
+      // 把草稿放入对应日期的 day-lane 中
+      const lanes = lanesEl.querySelectorAll(".day-lane");
+      lanes[yToDayIdx(e.clientY)]?.appendChild(d);
+    }else{
+      lanesEl.appendChild(d);
+    }
     createDrag.draftEl = d;
   }
   if(createDrag.draftEl){
-    // 裁剪到 [0,1440]
     s = clamp(s, 0, 1440);
     len = clamp(len, 0, 1440 - s);
-    // 禁止与已有块重叠：把草稿截断到第一个被撞到的邻块边缘
-    [s, len] = trimDraft(s, len);
+    [s, len] = trimDraft(s, len, dragDate);
     if(len >= QUARTER){
       createDrag.draftEl.style.left = (s/60*HOUR_PX())+"px";
       createDrag.draftEl.style.width = (len/60*HOUR_PX())+"px";
-      createDrag.draftEl.style.top = "6px";
-      createDrag.draftEl.style.height = "calc(var(--canvas-h) - 12px)";
+      if(isWeekView){
+        createDrag.draftEl.style.top = "4px";
+        createDrag.draftEl.style.height = "36px";
+      }else{
+        createDrag.draftEl.style.top = "6px";
+        createDrag.draftEl.style.height = "calc(var(--canvas-h) - 12px)";
+      }
       createDrag.draftEl.style.background = catById(activeCatId).color + "55";
       createDrag.draftEl.style.borderColor = catById(activeCatId).color;
       createDrag.draftEl.style.display = "block";
     }else{
-      createDrag.draftEl.style.display = "none";  // 撞进邻块内部、空间不足时隐藏草稿
+      createDrag.draftEl.style.display = "none";
     }
   }
 });
 /* 创建时：从锚点 s 向两侧延伸 len，遇到邻块就截断在边缘 */
-function trimDraft(s, len){
+function trimDraft(s, len, date){
+  date = date || currentDate;
   const e = s + len;
   const anchor = createDrag.startMin;
   let newS = s, newE = e;
-  blocksOf(currentDate).forEach(o=>{
+  blocksOf(date).forEach(o=>{
     const oE = o.start + o.length;
-    // 邻块在锚点左侧（oE<=anchor）：限制草稿左端不能小于 oE
     if(oE <= anchor){ newS = Math.max(newS, oE); }
-    // 邻块在锚点右侧（o.start>=anchor）：限制草稿右端不能大于 o.start
     if(o.start >= anchor){ newE = Math.min(newE, o.start); }
-    // 邻块覆盖锚点本身（o.start<anchor<oE）：左右都被夹住
     if(o.start < anchor && anchor < oE){ newS = Math.max(newS, anchor); newE = Math.min(newE, anchor); }
   });
   return [newS, newE - newS];
@@ -614,19 +748,17 @@ function trimDraft(s, len){
 lanesEl.addEventListener("pointerup", e=>{
   if(!createDrag){ return; }
   if(createDrag.draftEl){
-    const x = e.clientX - lanesEl.getBoundingClientRect().left;
+    const pad = createDrag.weekPad || 0;
+    const x = e.clientX - lanesEl.getBoundingClientRect().left - pad;
     const curMin = xToMinSnapped(x);
     let s = Math.min(createDrag.startMin, curMin);
     let len = Math.abs(curMin - createDrag.startMin);
     if(len < QUARTER){
       createDrag.draftEl.remove();
     }else{
-      // 裁剪到 [0,1440]
       s = clamp(s, 0, 1440);
       len = clamp(len, 0, 1440 - s);
-      // 禁止重叠：与拖动时一致的截断
-      [s, len] = trimDraft(s, len);
-      // 对齐 QUARTER
+      [s, len] = trimDraft(s, len, dragDate);
       s = Math.round(s/QUARTER)*QUARTER;
       len = Math.round(len/QUARTER)*QUARTER;
       if(len < QUARTER){
@@ -634,10 +766,16 @@ lanesEl.addEventListener("pointerup", e=>{
         toast("这里已被其他时间块占用");
       }else{
         const b = { id:uid(), categoryId:activeCatId, start:s, length:len, label:"", note:"" };
-        blocksOf(currentDate).push(b);
+        blocksOf(dragDate).push(b);
         createDrag.draftEl.remove();
         selectedBlockId = b.id;
-        saveState(); renderBlocks(); renderStats(); renderEditPanel();
+        saveState(); renderBlocks(); renderStats();
+        if(isWeekView){
+          // 周视图：保持在周视图不跳转
+          renderEditPanel();
+        }else{
+          renderEditPanel();
+        }
         toast(`已创建 ${minToHHMM(s)}–${minToHHMM(s+len)} · ${durStr(len)}`);
       }
     }
@@ -655,13 +793,13 @@ function setSelected(id){
   renderEditPanel();
 }
 
-function attachBlockHandlers(el, b){
+function attachBlockHandlers(el, b, blockDate){
+  blockDate = blockDate || currentDate;
   el.addEventListener("pointerdown", e=>{
     e.stopPropagation();
     if(e.button!==0 && e.pointerType==="mouse") return;
     const handle = e.target.classList.contains("handle");
     const mode = handle ? (e.target.classList.contains("left")?"resize-l":"resize-r") : "move";
-    // 仅切换选中样式，不重新渲染（否则会销毁当前正在交互的元素）
     setSelected(b.id);
     const startX = e.clientX;
     const orig = { start:b.start, length:b.length };
@@ -671,16 +809,15 @@ function attachBlockHandlers(el, b){
     function move(ev){
       const dx = ev.clientX - startX;
       const dmin = Math.round((dx / HOUR_PX() * 60) / QUARTER) * QUARTER;
-      // 基于【原始位置】计算空隙边界（拖动期间恒定，邻块不会穿模）
-      const [lo, hi] = moveBounds(b.id, orig.start, orig.length);
+      const [lo, hi] = moveBounds(b.id, orig.start, orig.length, blockDate);
       if(mode==="move"){
         b.start = clamp(orig.start + dmin, lo, hi);
       }else if(mode==="resize-l"){
-        const leftLo = leftNeighborEnd(b.id, orig.start);     // 左侧邻块边缘
+        const leftLo = leftNeighborEnd(b.id, orig.start, blockDate);
         let ns = clamp(orig.start + dmin, leftLo, orig.start + orig.length - QUARTER);
         b.start = ns; b.length = orig.start + orig.length - ns;
       }else if(mode==="resize-r"){
-        const rightHi = rightNeighborStart(b.id, orig.start, orig.length); // 右侧邻块边缘
+        const rightHi = rightNeighborStart(b.id, orig.start, orig.length, blockDate);
         b.length = clamp(orig.start + orig.length + dmin, orig.length, rightHi - orig.start);
         b.length = Math.max(b.length, QUARTER);
       }
@@ -707,10 +844,10 @@ function attachBlockHandlers(el, b){
 /* ---------- 编辑面板 ---------- */
 const editPanel = document.getElementById("editPanel");
 function renderEditPanel(){
-  const b = blocksOf(currentDate).find(x=>x.id===selectedBlockId);
+  const found = findBlockById(selectedBlockId);
+  const b = found ? found.block : undefined;
   if(!b){ editPanel.classList.remove("show"); return; }
   editPanel.classList.add("show");
-  // 类别选项
   const sel = document.getElementById("editCatSelect");
   sel.innerHTML = "";
   state.categories.forEach(c=>{
@@ -729,29 +866,36 @@ function renderEditPanelTime(b){
   document.getElementById("editTime").textContent = `${minToHHMM(b.start)}–${minToHHMM(b.start+b.length)} · ${durStr(b.length)}`;
 }
 document.getElementById("editLabel").addEventListener("input", e=>{
-  const b = blocksOf(currentDate).find(x=>x.id===selectedBlockId); if(!b) return;
-  b.label = e.target.value; saveState(); renderBlocks();
+  const found = findBlockById(selectedBlockId); if(!found) return;
+  found.block.label = e.target.value; saveState(); renderBlocks();
 });
 document.getElementById("editNote").addEventListener("input", e=>{
-  const b = blocksOf(currentDate).find(x=>x.id===selectedBlockId); if(!b) return;
-  b.note = e.target.value; saveState();
+  const found = findBlockById(selectedBlockId); if(!found) return;
+  found.block.note = e.target.value; saveState();
 });
 document.getElementById("delBlockBtn").addEventListener("click", ()=>{
-  const bs = blocksOf(currentDate);
-  const i = bs.findIndex(x=>x.id===selectedBlockId);
+  const found = findBlockById(selectedBlockId);
+  if(!found) return;
+  const bs = blocksOf(found.date);
+  const i = bs.indexOf(found.block);
   if(i>=0){ bs.splice(i,1); selectedBlockId=null; saveState(); renderBlocks(); renderStats(); renderEditPanel(); toast("已删除"); }
 });
 
 /* ---------- 统计 + 环形图 ---------- */
 function renderStats(){
-  const bs = blocksOf(currentDate);
-  const totals = {}; // categoryId -> minutes
+  // 收集数据：日视图用当天，周视图用 7 天
+  const bs = isWeekView
+    ? weekDates(currentDate).flatMap(d => blocksOf(d))
+    : blocksOf(currentDate);
+  const maxTotal = isWeekView ? 7*1440 : 1440;
+  const totals = {};
   let total = 0;
   bs.forEach(b=>{ totals[b.categoryId] = (totals[b.categoryId]||0)+b.length; total += b.length; });
 
   // 环形图（SVG）
   const svg = document.getElementById("donutSvg");
   const cx=65, cy=65, r=54, C=2*Math.PI*r;
+  svg.innerHTML = "";
   svg.innerHTML = "";
   // 背景圈
   svg.appendChild(makeCircle(cx,cy,r,C,C,0,"#eef0f4"));
@@ -765,7 +909,8 @@ function renderStats(){
     offset += dash;
   });
   document.getElementById("donutBig").textContent = durStr(total);
-  document.getElementById("donutSm").textContent = `/ 24h 已规划`;
+  const maxLabel = isWeekView ? "/ 168h 周" : "/ 24h 日";
+  document.getElementById("donutSm").textContent = maxLabel;
 
   // 列表
   const list = document.getElementById("statsList");
@@ -792,7 +937,7 @@ function renderStats(){
   const tot = document.createElement("div");
   tot.className = "stat-row";
   tot.style.marginTop="4px"; tot.style.borderTop="1px solid var(--line)"; tot.style.paddingTop="7px";
-  tot.innerHTML = `<span class="dot" style="background:#111827"></span><span class="name">合计</span><span class="bar"></span><span class="dur">${durStr(total)}</span><span class="pct">${Math.round(total/1440*100)}%</span>`;
+  tot.innerHTML = `<span class="dot" style="background:#111827"></span><span class="name">合计</span><span class="bar"></span><span class="dur">${durStr(total)}</span><span class="pct">${Math.round(total/maxTotal*100)}%</span>`;
   list.appendChild(tot);
 }
 function makeCircle(cx,cy,r,C,dash,offset,color){
@@ -808,11 +953,58 @@ function makeCircle(cx,cy,r,C,dash,offset,color){
 /* ---------- 日期导航 ---------- */
 const dateInput = document.getElementById("dateInput");
 dateInput.value = currentDate;
-function goDate(s){ currentDate = s; dateInput.value = s; selectedBlockId=null; renderAll(); }
-document.getElementById("prevDay").addEventListener("click", ()=>goDate(shiftDateStr(currentDate,-1)));
-document.getElementById("nextDay").addEventListener("click", ()=>goDate(shiftDateStr(currentDate, 1)));
-document.getElementById("todayBtn").addEventListener("click", ()=>goDate(todayStr()));
-dateInput.addEventListener("change", ()=>{ if(dateInput.value) goDate(dateInput.value); });
+function goDate(s, weekShift){
+  if(isWeekView && weekShift){
+    // 周视图下前后翻周
+    currentDate = shiftDateStr(currentDate, weekShift * 7);
+    dateInput.value = weekDates(currentDate)[0];
+    selectedBlockId = null;
+  }else{
+    currentDate = s;
+    dateInput.value = s;
+    selectedBlockId = null;
+  }
+  renderAll();
+  // 在周模式下同步更新 dateInput 显示为周一日期（便于识别位置）
+  if(isWeekView) dateInput.value = weekDates(currentDate)[0];
+}
+document.getElementById("prevDay").addEventListener("click", ()=>{
+  if(isWeekView) goDate(null, -1);
+  else goDate(shiftDateStr(currentDate, -1));
+});
+document.getElementById("nextDay").addEventListener("click", ()=>{
+  if(isWeekView) goDate(null, 1);
+  else goDate(shiftDateStr(currentDate, 1));
+});
+document.getElementById("todayBtn").addEventListener("click", ()=>{
+  if(isWeekView){ currentDate = todayStr(); dateInput.value = weekDates(todayStr())[0]; selectedBlockId=null; renderAll(); }
+  else goDate(todayStr());
+});
+dateInput.addEventListener("change", ()=>{
+  if(dateInput.value){
+    if(isWeekView) isWeekView = false;   // 选日期时自动切回日视图
+    goDate(dateInput.value);
+    updateViewToggle();
+  }
+});
+
+/* ---------- 视图切换 ---------- */
+function updateViewToggle(){
+  document.querySelectorAll(".toggle-btn").forEach(b=>{
+    b.classList.toggle("active", (b.dataset.view==="week") === isWeekView);
+  });
+  document.getElementById("prevDay").title = isWeekView ? "前一周" : "前一天";
+  document.getElementById("nextDay").title = isWeekView ? "后一周" : "后一天";
+  // 周模式下禁用语义模糊的 "清空当天"
+  document.getElementById("clearBtn").classList.toggle("disabled", isWeekView);
+}
+document.getElementById("viewToggle").addEventListener("click", e=>{
+  const btn = e.target.closest(".toggle-btn");
+  if(!btn || btn.classList.contains("active")) return;
+  isWeekView = btn.dataset.view === "week";
+  updateViewToggle();
+  goDate(currentDate);
+});
 
 /* ---------- 类别管理 模态框 ---------- */
 const catModal = document.getElementById("catModal");
@@ -890,6 +1082,7 @@ document.getElementById("importFile").addEventListener("change", e=>{
   e.target.value = "";
 });
 document.getElementById("clearBtn").addEventListener("click", ()=>{
+  if(isWeekView){ toast("周模式下请切换到日视图来清空"); return; }
   if(blocksOf(currentDate).length===0){ toast("当天没有时间块"); return; }
   if(!confirm(`确定清空 ${currentDate} 的全部时间块吗？此操作不可撤销。`)) return;
   state.days[currentDate] = [];
@@ -916,8 +1109,11 @@ document.addEventListener("keydown", e=>{
       const i = bs.findIndex(x=>x.id===selectedBlockId);
       if(i>=0){ bs.splice(i,1); selectedBlockId=null; saveState(); renderBlocks(); renderStats(); renderEditPanel(); }
     }
-  }else if(e.key==="ArrowLeft"){ goDate(shiftDateStr(currentDate,-1)); }
-  else if(e.key==="ArrowRight"){ goDate(shiftDateStr(currentDate,1)); }
+  }else if(e.key==="ArrowLeft"){
+    if(isWeekView) goDate(null, -1); else goDate(shiftDateStr(currentDate, -1));
+  }else if(e.key==="ArrowRight"){
+    if(isWeekView) goDate(null, 1); else goDate(shiftDateStr(currentDate, 1));
+  }
   else if(e.key==="Escape"){ selectedBlockId=null; catModal.classList.remove("show"); renderBlocks(); renderEditPanel(); }
 });
 
@@ -1276,7 +1472,8 @@ voiceCreateBtn.addEventListener("click", ()=>{
   toast(`已创建 ${minToHHMM(r.start)}–${minToHHMM(r.start+r.length)} · ${r.label}`);
 });
 
-// 初始化：若今天没有任何数据，留空（不预置示例，保持干净）
+// 初始化
+updateViewToggle();
 renderAll();
 // 每分钟刷新"现在"线
 setInterval(renderNowLine, 60000);
