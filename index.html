@@ -159,6 +159,66 @@
   .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px); background:#111827; color:#fff; padding:10px 18px; border-radius:8px; font-size:14px; opacity:0; transition:.25s; z-index:200; pointer-events:none}
   .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
 
+  /* ---------- 语音：顶部按钮 + 内嵌麦克风 ---------- */
+  .voice-btn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 12px;font-size:14px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+  .voice-btn:hover{background:#3b78f2}
+  .voice-btn.hidden{display:none}
+  /* 输入框容器：包裹 input + 麦克风按钮 */
+  .input-with-mic{position:relative; flex:1; min-width:120px}
+  .input-with-mic input, .input-with-mic textarea{
+    width:100%; border:1px solid var(--line); border-radius:8px; padding:7px 34px 7px 10px; font-size:14px; font-family:inherit;
+  }
+  .input-with-mic textarea{min-height:50px; resize:vertical}
+  .mic-btn{
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    border:none; background:transparent; color:var(--ink-soft); font-size:16px; padding:2px 4px; cursor:pointer; line-height:1;
+    z-index:1;
+  }
+  .input-with-mic textarea ~ .mic-btn{top:auto; bottom:8px; transform:none}
+  .mic-btn:hover{color:var(--accent)}
+  .mic-btn.recording{
+    color:#ef4444;
+    animation:micPulse 1s infinite;
+    z-index:2;
+  }
+  .mic-btn.recording::after{
+    content:""; position:absolute; inset:-6px; border-radius:50%;
+    border:2.5px solid #ef4444; opacity:.8;
+    animation:micRing 1.4s infinite;
+  }
+  @keyframes micPulse{0%,100%{opacity:1}50%{opacity:.4}}
+  @keyframes micRing{
+    0%{transform:scale(.9);opacity:.8}
+    100%{transform:scale(1.5);opacity:0}
+  }
+  .mic-btn.hidden{display:none}
+  /* 录音中的输入框边框提示 */
+  .input-with-mic.recording input, .input-with-mic.recording textarea{
+    border-color:#ef4444; box-shadow:0 0 0 2px rgba(239,68,68,.15);
+  }
+
+  /* ---------- 语音浮层 ---------- */
+  .voice-overlay{position:fixed; inset:0; background:rgba(17,24,39,.55); display:none; align-items:center; justify-content:center; z-index:150; padding:16px}
+  .voice-overlay.show{display:flex}
+  .voice-card{background:#fff; border-radius:16px; padding:24px; width:420px; max-width:94vw; box-shadow:0 12px 50px rgba(0,0,0,.3); text-align:center}
+  .voice-card h3{margin:0 0 6px; font-size:17px}
+  .voice-card .sub{font-size:13px; color:var(--ink-soft); margin-bottom:16px}
+  .voice-mic{width:84px; height:84px; border-radius:50%; border:none; background:var(--accent); color:#fff; font-size:34px; cursor:pointer; margin:6px auto 14px; display:grid; place-items:center; position:relative; transition:.2s}
+  .voice-mic:hover{background:#3b78f2}
+  .voice-mic.listening{background:#ef4444}
+  .voice-mic.listening::after{content:""; position:absolute; inset:-8px; border-radius:50%; border:2px solid #ef4444; animation:voiceRing 1.4s infinite}
+  @keyframes voiceRing{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.5);opacity:0}}
+  .voice-transcript{min-height:48px; padding:12px; background:#f5f6fa; border-radius:10px; font-size:15px; color:var(--ink); margin-bottom:14px; word-break:break-all}
+  .voice-transcript.empty{color:#9ca3af; font-style:italic}
+  .voice-preview{display:none; background:#eef4ff; border:1px solid #dbe7ff; border-radius:10px; padding:12px 14px; margin-bottom:14px; text-align:left}
+  .voice-preview.show{display:block}
+  .voice-preview .pv-row{font-size:14px; margin:3px 0; display:flex; gap:6px}
+  .voice-preview .pv-row b{color:var(--accent)}
+  .voice-preview .pv-err{color:#ef4444; font-size:13px}
+  .voice-actions{display:flex; gap:8px; justify-content:center; flex-wrap:wrap}
+  .voice-actions .btn:disabled{opacity:.45; cursor:not-allowed}
+  .voice-hint{font-size:12px; color:var(--ink-soft); margin-top:12px}
+
   @media (max-width:640px){
     :root{--hour-px:60px; --quarter-px:15px}
     .stats{flex-direction:column; align-items:stretch}
@@ -178,6 +238,7 @@
     <button class="nav-btn" id="nextDay" title="后一天">›</button>
     <button class="today-btn" id="todayBtn">今天</button>
     <span class="spacer"></span>
+    <button class="voice-btn hidden" id="voiceAddBtn" title="语音添加时间块">🎤 语音添加</button>
     <button class="icon-btn" id="exportBtn">导出</button>
     <button class="icon-btn" id="importBtn">导入</button>
     <button class="icon-btn danger-btn" id="clearBtn">清空当天</button>
@@ -215,11 +276,17 @@
     </div>
     <div class="edit-row">
       <label>标签</label>
-      <input type="text" id="editLabel" placeholder="例如：晨会、刷题、跑步…" maxlength="40">
+      <div class="input-with-mic">
+        <input type="text" id="editLabel" placeholder="例如：晨会、刷题、跑步…" maxlength="40">
+        <button type="button" class="mic-btn hidden" id="micEditLabel" title="语音输入">🎤</button>
+      </div>
     </div>
     <div class="edit-row">
       <label>备注</label>
-      <textarea id="editNote" placeholder="可选备注…" maxlength="200"></textarea>
+      <div class="input-with-mic">
+        <textarea id="editNote" placeholder="可选备注…" maxlength="200"></textarea>
+        <button type="button" class="mic-btn hidden" id="micEditNote" title="语音输入">🎤</button>
+      </div>
     </div>
     <div class="edit-actions">
       <button class="btn-del" id="delBlockBtn">删除此块</button>
@@ -245,7 +312,10 @@
     <h3 id="catModalTitle">新建类别</h3>
     <div class="field">
       <label>名称</label>
-      <input type="text" id="catNameInput" maxlength="10" placeholder="例如：阅读">
+      <div class="input-with-mic">
+        <input type="text" id="catNameInput" maxlength="10" placeholder="例如：阅读">
+        <button type="button" class="mic-btn hidden" id="micCatName" title="语音输入">🎤</button>
+      </div>
     </div>
     <div class="field">
       <label>颜色</label>
@@ -255,6 +325,23 @@
       <button class="btn" id="catModalCancel">取消</button>
       <button class="btn btn-primary" id="catModalSave">保存</button>
     </div>
+  </div>
+</div>
+
+<!-- 语音浮层 -->
+<div class="voice-overlay" id="voiceOverlay">
+  <div class="voice-card">
+    <h3>语音添加时间块</h3>
+    <div class="sub">点麦克风说话，例如「明天下午3点到5点学习数学」</div>
+    <button class="voice-mic" id="voiceMic" title="开始/停止说话">🎤</button>
+    <div class="voice-transcript empty" id="voiceTranscript">点击麦克风开始说话…</div>
+    <div class="voice-preview" id="voicePreview"></div>
+    <div class="voice-actions">
+      <button class="btn" id="voiceAgain" disabled>🔄 重说</button>
+      <button class="btn btn-primary" id="voiceCreate" disabled>✅ 创建</button>
+      <button class="btn" id="voiceClose">关闭</button>
+    </div>
+    <div class="voice-hint">支持：今天/明天/后天 · 上午/下午/晚上 · 点/点半/点分 · 持续半小时/一小时</div>
   </div>
 </div>
 
@@ -853,6 +940,341 @@ function renderAll(){
   renderNowLine();
 }
 window.addEventListener("resize", ()=>{ renderRuler(); renderBlocks(); renderNowLine(); });
+
+/* ============================================================
+   语音识别功能
+   ============================================================ */
+const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+let voiceSupported = !!SpeechAPI;
+
+/* —— 通用引擎：管理一次识别会话 —— */
+let activeRecognizer = null;   // 当前正在运行的识别器（全局唯一）
+let dictationTarget = null;    // 功能B：当前语音输入的目标输入框
+let userStopped = false;       // 是否用户主动停止（true 则不自动重启）
+let idleTimer = null;          // 超时计时器：5 秒无语音则自动停止
+
+const VOICE_IDLE_MS = 5000;    // 5 秒不说话自动停止
+function resetIdleTimer(){
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(()=>{ if(activeRecognizer) stopRecognizer(); }, VOICE_IDLE_MS);
+}
+function clearIdleTimer(){ clearTimeout(idleTimer); }
+
+function stopRecognizer(){
+  if(activeRecognizer){
+    userStopped = true;        // 标记为主动停止，阻止 onend 自动重启
+    clearIdleTimer();
+    try{ activeRecognizer.stop(); }catch(e){}
+    activeRecognizer = null;
+  }
+}
+/* 功能B：通用语音输入 —— 边说边把识别文字写入 inputEl */
+function startDictation(inputEl){
+  if(!voiceSupported) return;
+  if(activeRecognizer) stopRecognizer();
+  dictationTarget = inputEl;
+  userStopped = false;
+  const rec = new SpeechAPI();
+  rec.lang = "zh-CN"; rec.continuous = true; rec.interimResults = true;
+  let finalText = inputEl.value || "";
+  rec.onresult = e=>{
+    resetIdleTimer();           // 每次收到语音结果，重置 5 秒计时
+    let interim = "";
+    for(let i=e.resultIndex; i<e.results.length; i++){
+      const r = e.results[i];
+      if(r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    inputEl.value = (finalText + interim).slice(0, inputEl.maxLength || 1000000);
+    inputEl.dispatchEvent(new Event("input", {bubbles:true}));
+  };
+  rec.onerror = e=>{
+    // not-allowed / service 异常 → 真正停止，不重启
+    if(e.error==="not-allowed" || e.error==="service-not-allowed"){
+      toast("麦克风权限被拒绝，请在浏览器设置中允许");
+      userStopped = true;
+      setMicRecording(inputEl, false);
+    }
+    // "no-speech" / "aborted" 等交给 onend 处理自动重启，不在这里报错打断
+  };
+  rec.onend = ()=>{
+    // 浏览器在停顿时会自动结束识别 → 若非用户主动停止，则自动重启以延续会话
+    if(!userStopped && dictationTarget === inputEl){
+      try{ rec.start(); return; }catch(e){ /* 重启失败则结束 */ }
+    }
+    activeRecognizer = null;
+    setMicRecording(inputEl, false);
+    dictationTarget = null;
+  };
+  try{ rec.start(); activeRecognizer = rec; setMicRecording(inputEl, true); resetIdleTimer(); }
+  catch(e){ toast("无法启动麦克风"); }
+}
+function setMicRecording(inputEl, on){
+  // 找到与该输入框配对的麦克风按钮和容器
+  const wrap = inputEl.closest(".input-with-mic");
+  const mic = wrap && wrap.querySelector(".mic-btn");
+  if(mic) mic.classList.toggle("recording", on);
+  if(wrap) wrap.classList.toggle("recording", on);
+}
+
+/* 给三个输入框的麦克风按钮绑定（仅支持的浏览器显示） */
+function bindDictationMic(micId, inputId){
+  const mic = document.getElementById(micId);
+  const input = document.getElementById(inputId);
+  if(!voiceSupported || !mic || !input){ return; }
+  mic.classList.remove("hidden");
+  mic.addEventListener("click", e=>{
+    e.preventDefault(); e.stopPropagation();
+    if(activeRecognizer === null || dictationTarget !== input){
+      startDictation(input);
+    }else{
+      stopRecognizer();
+    }
+  });
+}
+bindDictationMic("micEditLabel", "editLabel");
+bindDictationMic("micEditNote",  "editNote");
+bindDictationMic("micCatName",   "catNameInput");
+
+/* —— 中文解析器：parseVoiceCommand(text) → {date,start,length,categoryId,label} 或 null —— */
+const CN_NUM = {"零":0,"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,"十一":11,"十二":12,"十三":13,"十四":14,"十五":15,"十六":16,"十七":17,"十八":18,"十九":19,"二十":20,"廿":20,"二十一":21,"二十二":22,"二十三":23,"二十四":24};
+function cn2num(s){            // 汉字数字 → 数字，支持“十二”“二十”“二十三”
+  if(s in CN_NUM) return CN_NUM[s];
+  if(/^十/.test(s)) return 10 + (CN_NUM[s.slice(1)] || 0);
+  if(/十$/.test(s)) return (CN_NUM[s.slice(0,-1)] || 1) * 10;
+  const m = s.match(/^(\d+)十(\d)?$/); if(m) return +m[1]*10 + (+m[2]||0);
+  const n = parseInt(s,10); return isNaN(n)? null : n;
+}
+function parseVoiceCommand(text){
+  if(!text || !text.trim()) return null;
+  let t = text.replace(/\s+/g,"").replace(/[，。、,.!！?？啊呀嗯吧呢]+$/g,"");
+  // —— 1) 日期 ——
+  let dateOffset = 0;            // 相对今天的偏移天数
+  let dateMatched = true;
+  if(/大后天/.test(t)) dateOffset = 3;
+  else if(/后天/.test(t)) dateOffset = 2;
+  else if(/明天/.test(t)) dateOffset = 1;
+  else if(/今天/.test(t)) dateOffset = 0;
+  else if(/昨天/.test(t)) dateOffset = -1;
+  else if(/前天/.test(t)) dateOffset = -2;
+  else dateMatched = false;
+  const dateStr = shiftDateStr(todayStr(), dateOffset);
+  // —— 2) 时间：先抽“时段词”决定上午/下午 ——
+  let period = 0;               // 0=上午(不加), 12=下午
+  if(/下午|傍晚|pm/i.test(t)) period = 12;
+  else if(/晚上|夜间|晚$/.test(t)) period = 12;
+  else if(/中午/.test(t)) period = 0;       // 中午12点 = 12点
+  else if(/凌晨|清晨|早上|上午|am/i.test(t)) period = 0;
+  // 把“点”前的数字提取出来。先规范化汉字数字。
+  function normNums(s){
+    // 先保护"一刻""三刻"不被拆开（一→1 后变成"1刻"无法匹配）
+    s = s.replace(/([一二三])刻/g, m => cn2num(m[0])===null ? m : cn2num(m[0])+"刻");
+    return s.replace(/[零一二两三四五六七八九十廿]+/g, m => (cn2num(m)===null? m : cn2num(m)));
+  }
+  let nt = normNums(t);
+  // 语音识别可能把"四点零五"转写为"4.05"或"4:05" → 标准化为"4点05分"
+  // 负向先行 (?!\s*[点分]) 避免重复处理已有 点/分 的文本
+  nt = nt.replace(/(\d{1,2})[.:](\d{2})(?!\s*[点分])/g, "$1点$2分");
+  // 也处理一位小数如"4.5"(四点五分)→"4点05分"(补零)
+  nt = nt.replace(/(\d{1,2})[.:](\d{1})(?!\s*[点分])/g, (_,h,m)=> h+"点0"+m+"分");
+  // 时间点正则：数字 + 点( +半 | +一刻/三刻/X刻 | +数字分 | +纯数字分钟 )
+  // 整个分钟捕获组可选：点后是“到/跑步”等非数字时匹配空。
+  // 纯数字分钟用 (?!\s*点) 防止把“5点30”的 30 误吃为下一个点的小时
+  const TIME = /(\d{1,2})\s*点\s*(半|一刻|三刻|\d?刻|(\d{1,2})\s*分|(\d{1,2})(?!\s*点))?/g;
+  const points = [];
+  let m;
+  while((m = TIME.exec(nt)) !== null){
+    let h = parseInt(m[1],10);
+    if(period===12 && h<12) h += 12;          // 下午/晚上 +12
+    if(h>=24) h = 24;
+    let min = 0;
+    if(m[2]==="半") min = 30;
+    else if(m[2]==="刻"||m[2]==="一刻"||m[2]==="1刻") min = 15;
+    else if(m[2]==="三刻"||m[2]==="3刻") min = 45;
+    else if(m[3]) min = parseInt(m[3],10);     // “X分”
+    else if(m[4]) min = parseInt(m[4],10);     // 纯数字分钟（如 12点15 的 15）
+    min = Math.min(59, min);
+    let total = h*60 + min;
+    if(total > 1440) total = 1440;
+    points.push(total);
+  }
+  if(points.length === 0) return null;        // 没解析到时间 → 失败
+  // 对齐到 15 分钟
+  const snap = v => Math.round(v/QUARTER)*QUARTER;
+  let start, length;
+  if(points.length >= 2){
+    // 第一个点为起点，其后第一个不同的点为终点
+    start = points[0];
+    let end = points.find(p => p !== start);
+    if(end === undefined) end = start + 60;
+    if(end < start){
+      // 两个可能性：下午延续（+12h）或跨午夜（+24h）
+      // 如 12:30到1点 → +12h = 30m（合理），+24h = 750m（不合理）
+      // 如 23:00到1点 → +12h = 14h（跨大半天），+24h = 2h（合理）
+      const span12 = end + 720 - start;
+      const span24 = end + 1440 - start;
+      if(span12 <= 720) end += 720;        // 下午延续，时长 <= 12h
+      else [start, end] = [end, start];    // 否则正常交换（或由 snap 后处理）
+    }
+    length = end - start;
+    if(length > 1440){ length = 1440; start = 0; }  // 防止超24h
+  }else{
+    // 单个时间点：看是否有”持续/大概X小时/半小时”等
+    start = points[0];
+    let dur = 60;                              // 默认1小时
+    const dm = nt.match(/(?:持续|大约|大概)?半小时/);
+    const hm = nt.match(/(\d{1,2})\s*(?:个)?(?:持续|大约|大概)?小时/);
+    if(dm) dur = 30;
+    else if(hm) dur = parseInt(hm[1],10)*60;
+    length = dur;
+  }
+  start = snap(start); length = snap(length);
+  if(start < 0) start = 0;
+  if(start + length > 1440) length = 1440 - start;
+  if(length < QUARTER) length = QUARTER;
+  // —— 3) 类别：匹配现有类别名 ——
+  let categoryId = activeCatId, matchedCatName = null;
+  for(const c of state.categories){
+    if(t.indexOf(c.name) >= 0){ categoryId = c.id; matchedCatName = c.name; break; }
+  }
+  // —— 4) 标签：去掉日期/时段/时间/持续时间词，保留类别名 ——
+  let label = nt
+    .replace(/大后天|后天|明天|今天|昨天|前天/g,"")
+    .replace(/下午|傍晚|夜间|晚上|中午|凌晨|清晨|早上|上午/g,"")
+    .replace(/\d{1,2}\s*点\s*(半|一刻|三刻|\d?刻|(\d{1,2})\s*分|(\d{1,2})(?!\s*点))?/g,"")
+    .replace(/到|至|-|~/g,"")
+    .replace(/\d{1,2}\s*(?:个)?(?:持续|大约|大概)?小时/g,"")   // "两小时"/"持续半小时"
+    .replace(/(?:持续|大约|大概)?半小时/g,"")                  // 兜底纯"半小时"
+    .replace(/\s+/g,"")
+    .slice(0,40);
+  if(!label) label = matchedCatName || catById(categoryId).name;
+  return { date:dateStr, start, length, categoryId, label, dateMatched };
+}
+
+/* —— 功能A：语音浮层 —— */
+const voiceOverlay = document.getElementById("voiceOverlay");
+const voiceMic = document.getElementById("voiceMic");
+const voiceTranscript = document.getElementById("voiceTranscript");
+const voicePreview = document.getElementById("voicePreview");
+const voiceCreateBtn = document.getElementById("voiceCreate");
+const voiceAgainBtn = document.getElementById("voiceAgain");
+let voiceListening = false;
+let voiceLastText = "";
+let voiceParsed = null;
+
+if(voiceSupported){
+  document.getElementById("voiceAddBtn").classList.remove("hidden");
+}
+document.getElementById("voiceAddBtn").addEventListener("click", ()=>{
+  if(!voiceSupported){ toast("当前浏览器不支持语音识别，请用 Chrome 或 Edge"); return; }
+  openVoiceOverlay();
+});
+document.getElementById("voiceClose").addEventListener("click", closeVoiceOverlay);
+voiceOverlay.addEventListener("click", e=>{ if(e.target===voiceOverlay) closeVoiceOverlay(); });
+
+function openVoiceOverlay(){
+  voiceOverlay.classList.add("show");
+  resetVoiceUI();
+  // 自动开始
+  setTimeout(()=>startVoiceListening(), 100);
+}
+function closeVoiceOverlay(){
+  stopRecognizer();
+  voiceListening = false;
+  voiceMic.classList.remove("listening");
+  voiceOverlay.classList.remove("show");
+}
+function resetVoiceUI(){
+  voiceTranscript.textContent = "点击麦克风开始说话…";
+  voiceTranscript.classList.add("empty");
+  voicePreview.classList.remove("show");
+  voicePreview.innerHTML = "";
+  voiceCreateBtn.disabled = true;
+  voiceAgainBtn.disabled = true;
+  voiceLastText = "";
+  voiceParsed = null;
+}
+voiceMic.addEventListener("click", ()=>{
+  if(voiceListening){ stopRecognizer(); }
+  else { startVoiceListening(); }
+});
+function startVoiceListening(){
+  if(!voiceSupported || activeRecognizer) return;
+  userStopped = false;
+  const rec = new SpeechAPI();
+  rec.lang = "zh-CN"; rec.continuous = true; rec.interimResults = true;
+  resetVoiceUI();
+  voiceListening = true;
+  voiceMic.classList.add("listening");
+  rec.onresult = e=>{
+    resetIdleTimer();           // 每次收到语音结果，重置 5 秒计时
+    let txt = "";
+    for(let i=0;i<e.results.length;i++) txt += e.results[i][0].transcript;
+    voiceLastText = txt.trim();
+    if(voiceLastText){
+      voiceTranscript.textContent = voiceLastText;
+      voiceTranscript.classList.remove("empty");
+      updateVoicePreview(voiceLastText);
+    }
+  };
+  rec.onerror = e=>{
+    if(e.error==="not-allowed" || e.error==="service-not-allowed"){
+      toast("麦克风权限被拒绝，请在浏览器设置中允许");
+      userStopped = true;
+      voiceListening = false; voiceMic.classList.remove("listening");
+    }
+  };
+  rec.onend = ()=>{
+    // 浏览器静默自动结束，或 idle 超时触发 stopRecognizer() 后也会进这里
+    // 非用户主动停止则自动重启，延续会话
+    if(!userStopped && voiceListening){
+      try{ rec.start(); return; }catch(e){ /* 重启失败则结束 */ }
+    }
+    voiceListening = false;
+    voiceMic.classList.remove("listening");
+    activeRecognizer = null;
+    voiceAgainBtn.disabled = false;
+  };
+  try{ rec.start(); activeRecognizer = rec; resetIdleTimer(); }
+  catch(e){ voiceListening=false; voiceMic.classList.remove("listening"); toast("无法启动麦克风"); }
+}
+function updateVoicePreview(text){
+  const r = parseVoiceCommand(text);
+  voiceParsed = r;
+  if(!r){
+    voicePreview.classList.add("show");
+    voicePreview.innerHTML = `<div class="pv-err">⚠️ 没听清时间，请说如「下午3点到5点学习数学」</div>`;
+    voiceCreateBtn.disabled = true;
+    return;
+  }
+  const catName = catById(r.categoryId).name;
+  voicePreview.classList.add("show");
+  voicePreview.innerHTML = `
+    <div class="pv-row">📅 <b>${r.date}</b></div>
+    <div class="pv-row">🕘 <b>${minToHHMM(r.start)}–${minToHHMM(r.start+r.length)}</b> · ${durStr(r.length)}</div>
+    <div class="pv-row">🏷️ <b>${escapeHtml(catName)}</b> · ${escapeHtml(r.label)}</div>`;
+  voiceCreateBtn.disabled = false;
+}
+voiceAgainBtn.addEventListener("click", startVoiceListening);
+voiceCreateBtn.addEventListener("click", ()=>{
+  if(!voiceParsed) return;
+  const r = voiceParsed;
+  // 重叠检查（与禁止重叠规则一致）
+  const clash = blocksOf(r.date).some(b => r.start < b.start+b.length && b.start < r.start+r.length);
+  if(clash){
+    toast("该时段已有时间块，请重说一个空闲时段");
+    return;
+  }
+  const b = { id:uid(), categoryId:r.categoryId, start:r.start, length:r.length, label:r.label, note:"" };
+  blocksOf(r.date).push(b);
+  saveState();
+  closeVoiceOverlay();
+  // 跳到该日期并选中
+  if(r.date !== currentDate){ goDate(r.date); }
+  selectedBlockId = b.id;
+  renderBlocks(); renderStats(); renderEditPanel();
+  toast(`已创建 ${minToHHMM(r.start)}–${minToHHMM(r.start+r.length)} · ${r.label}`);
+});
 
 // 初始化：若今天没有任何数据，留空（不预置示例，保持干净）
 renderAll();
